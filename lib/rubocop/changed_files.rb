@@ -12,6 +12,9 @@ module RuboCop
   class ChangedFiles
     DEFAULT_REVISION = 'HEAD'
     FILESYSTEM_ENCODING = Encoding.find('filesystem')
+    EVERY_LINE = (1..).freeze
+    HUNK_HEADER = /\A@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/.freeze
+    private_constant :EVERY_LINE, :HUNK_HEADER
 
     # Whether git can resolve `name` to a commit in the current repository.
     def self.revision?(name)
@@ -20,6 +23,19 @@ module RuboCop
       status.success?
     rescue Errno::ENOENT
       false
+    end
+
+    # The offenses that reach into any of a file's changed lines, as {#lines}
+    # gives them. An offense spanning several lines counts when any of them
+    # changed. A syntax error is kept wherever it lands, since deleting one
+    # line can break the parse of lines nobody touched.
+    def self.touching(ranges, offenses)
+      offenses.select do |offense|
+        offense.cop_name == 'Lint/Syntax' ||
+          ranges.any? do |range|
+            range.cover?(offense.line) || range.begin.between?(offense.line, offense.last_line)
+          end
+      end
     end
 
     def initialize(revision = nil)
@@ -44,18 +60,80 @@ module RuboCop
       files.select { |file| changed.include?(file) }
     end
 
+    # The lines added or modified since the revision, keyed by the same paths
+    # as {#paths}. A file that only lost lines, or was only renamed, has no
+    # lines left to point at. Every line of an untracked file is new.
+    #
+    # @return [Hash{String => Array<Range>}]
+    def lines
+      root = repository_root
+      changed = modified_paths.to_h { |path| [path, []] }
+      hunk_ranges(changed)
+      untracked_paths.each { |path| changed[path] = [EVERY_LINE] }
+
+      changed.transform_keys { |path| File.expand_path(path, root) }
+    end
+
     private
 
     def repository_root
       filesystem_path(git('rev-parse', '--show-toplevel').b.chomp)
     end
 
-    def modified_paths(revision = @revision)
+    def modified_paths
+      split_paths(diff('--name-only', '--diff-filter=d', '-z'))
+    end
+
+    # Fills in the ranges of the files already listed, from a patch without
+    # context lines, where each hunk header gives the new lines exactly.
+    def hunk_ranges(changed)
+      header = false
+      ranges = nil
+
+      patch.each_line do |line|
+        if line.start_with?('diff --git ')
+          header = true
+        elsif header && line.start_with?('+++ ')
+          ranges = changed[filesystem_path(unquote(header_path(line)))]
+        elsif (range = hunk_range(line))
+          # An added line reading `++ x` prints as `+++ x`, so file headers
+          # only count before the first hunk.
+          header = false
+          ranges&.push(range) if range.size.positive?
+        end
+      end
+    end
+
+    # The options pin down what git prints whatever the user's diff settings.
+    def patch
+      diff('--no-color', '--no-ext-diff', '--no-textconv', '--no-prefix',
+           '--find-renames', '--diff-filter=d', '--unified=0').b
+    end
+
+    # A hunk that only removes lines gives an empty range.
+    def hunk_range(line)
+      return unless (hunk = HUNK_HEADER.match(line))
+
+      start = hunk[1].to_i
+      start..(start + (hunk[2] || 1).to_i - 1)
+    end
+
+    # git ends a name that has a space in it with a tab, so `patch` can tell
+    # where the name stops.
+    def header_path(line)
+      line.delete_prefix('+++ ').chomp.delete_suffix("\t")
+    end
+
+    # `core.quotePath=false` leaves non-ASCII names alone, but git still
+    # C-quotes a name with a quote, backslash, or control character in it.
+    def unquote(path)
+      path.start_with?('"') ? path.undump : path
+    end
+
+    def diff(*args, revision: @revision)
       # `diff.relative` would make git report paths relative to the current
       # directory rather than to the repository root.
-      split_paths(
-        git('-c', 'diff.relative=false', 'diff', '--name-only', '--diff-filter=d', '-z', revision)
-      )
+      git('-c', 'diff.relative=false', '-c', 'core.quotePath=false', 'diff', *args, revision)
     rescue Error
       raise unless revision == DEFAULT_REVISION && unborn_head?
 
@@ -63,7 +141,7 @@ module RuboCop
       # can already be staged in it. Against the empty tree every one of them
       # counts as changed, which is what the caller wants to hear rather than
       # an error about `HEAD` not resolving.
-      modified_paths(empty_tree)
+      diff(*args, revision: empty_tree)
     end
 
     def unborn_head?

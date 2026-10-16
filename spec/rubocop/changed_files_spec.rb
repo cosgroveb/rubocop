@@ -238,4 +238,109 @@ RSpec.describe RuboCop::ChangedFiles do
       end
     end
   end
+
+  describe '#lines' do
+    def lines_by_basename
+      changed_files.lines.transform_keys { |path| File.basename(path) }
+    end
+
+    before do
+      write('lib/numbered.rb', "one\ntwo\nthree\nfour\nfive\n")
+      commit_all('numbered')
+    end
+
+    it 'reports the lines changed in the working tree' do
+      write('lib/numbered.rb', "one\nTWO\nthree\nFOUR\nfive\n")
+
+      expect(lines_by_basename).to eq('numbered.rb' => [2..2, 4..4])
+    end
+
+    it 'reports added lines as one range' do
+      write('lib/numbered.rb', "one\ntwo\nnew\nnewer\nthree\nfour\nfive\n")
+
+      expect(lines_by_basename).to eq('numbered.rb' => [3..4])
+    end
+
+    it 'reports no lines for a file that only lost lines' do
+      write('lib/numbered.rb', "one\nfive\n")
+
+      expect(lines_by_basename).to eq('numbered.rb' => [])
+    end
+
+    it 'reports every line of an untracked file' do
+      write('lib/untracked.rb')
+
+      expect(lines_by_basename).to eq('untracked.rb' => [1..])
+    end
+
+    it 'reports staged lines' do
+      write('lib/numbered.rb', "one\nTWO\nthree\nfour\nfive\n")
+      git('add', 'lib/numbered.rb')
+
+      expect(lines_by_basename).to eq('numbered.rb' => [2..2])
+    end
+
+    it 'reports no lines for a file that was only renamed' do
+      git('mv', 'lib/numbered.rb', 'lib/renamed.rb')
+
+      expect(lines_by_basename).to eq('renamed.rb' => [])
+    end
+
+    it 'is not confused by an added line that looks like a file header' do
+      write('lib/numbered.rb', "one\n++ two\nthree\nfour\nfive\n")
+
+      expect(lines_by_basename).to eq('numbered.rb' => [2..2])
+    end
+
+    it 'reports paths containing spaces and characters that are not plain ASCII' do
+      write('lib/with space café.rb', "one\n")
+      commit_all('awkward name')
+      write('lib/with space café.rb', "ONE\n")
+
+      expect(lines_by_basename.transform_keys { |name| name.encode(Encoding::UTF_8) })
+        .to eq('with space café.rb' => [1..1])
+    end
+
+    it 'keys the lines by the same absolute paths as #paths' do
+      write('lib/numbered.rb', "one\nTWO\nthree\nfour\nfive\n")
+      write('lib/untracked.rb')
+
+      expect(changed_files.lines.keys).to match_array(changed_files.paths.to_a)
+    end
+
+    it 'ignores diff settings that change what git prints' do
+      git('config', 'diff.noprefix', 'true')
+      git('config', 'diff.renames', 'false')
+      git('config', 'color.diff', 'always')
+      git('mv', 'lib/numbered.rb', 'lib/renamed.rb')
+      write('lib/renamed.rb', "one\nTWO\nthree\nfour\nfive\n")
+
+      expect(lines_by_basename).to eq('renamed.rb' => [2..2])
+    end
+
+    context 'in a repository without any commits' do
+      before do
+        FileUtils.rm_rf(['.git', 'lib'])
+        git_init
+      end
+
+      it 'reports every line of a staged file' do
+        write('lib/staged.rb', "one\ntwo\n")
+        git('add', 'lib/staged.rb')
+
+        expect(lines_by_basename).to eq('staged.rb' => [1..2])
+      end
+    end
+
+    context 'with an explicit revision' do
+      let(:revision) { 'HEAD~1' }
+
+      it 'compares against that revision' do
+        write('lib/numbered.rb', "one\ntwo\nthree\nfour\nFIVE\n")
+        commit_all('second')
+
+        expect(lines_by_basename).to eq('numbered.rb' => [5..5])
+      end
+    end
+  end
 end

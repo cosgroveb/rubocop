@@ -1054,6 +1054,41 @@ RSpec.describe RuboCop::MCP::Server, :isolated_environment do
           .to eq('`changed` only applies when checking files.')
       end
     end
+
+    context 'with `changed_lines`' do
+      let(:arguments) { { changed_lines: true } }
+
+      def git(*args)
+        _stdout, stderr, status = Open3.capture3('git', *args)
+        raise "git #{args.join(' ')} failed: #{stderr}" unless status.success?
+      end
+
+      before do
+        git('init')
+        git('config', 'maintenance.auto', 'false')
+        git('add', 'a.rb')
+        git('-c', 'user.email=test@example.com', '-c', 'user.name=Test', 'commit', '-m', 'a')
+        File.write('a.rb', "#{source}puts \"c\"\n")
+      end
+
+      it 'reports only the offenses on lines that changed' do
+        offenses = parsed_result[:files].flat_map { |file| file[:offenses] }
+
+        expect(offenses.map { |offense| offense[:location][:start_line] }).to eq([4])
+        expect(parsed_result[:summary][:offense_count]).to eq(1)
+      end
+    end
+
+    context 'when autocorrecting with `changed_lines`' do
+      let(:tool) { 'rubocop_autocorrection' }
+      let(:arguments) { { safety: true, changed_lines: true } }
+
+      it 'refuses, since corrections cannot be kept to the changed lines' do
+        expect(response[:result][:isError]).to be true
+        expect(response[:result][:content].first[:text])
+          .to eq('`changed_lines` only applies to inspection.')
+      end
+    end
   end
 
   context 'when corrections loop' do

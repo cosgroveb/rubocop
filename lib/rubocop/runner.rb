@@ -111,7 +111,17 @@ module RuboCop
     def only_changed(target_files)
       return target_files unless @options[:changed]
 
-      ChangedFiles.new(@options[:changed]).filter(target_files).freeze
+      changed_files = ChangedFiles.new(@options[:changed])
+      @changed_lines = changed_files.lines if @options[:changed_lines]
+      changed_files.filter(target_files).freeze
+    end
+
+    # Applied to what a file's inspection returns rather than inside it, so the
+    # result cache keeps every offense whatever lines this run cares about.
+    def only_changed_lines(file, offenses)
+      return offenses unless @changed_lines
+
+      ChangedFiles.touching(@changed_lines.fetch(file, []), offenses).freeze
     end
 
     def find_target_files(paths)
@@ -168,7 +178,7 @@ module RuboCop
       formatter_set.started(files)
       formatters_started = true
       file_iterator(files) do |file|
-        offenses, problems = collect_problems { process_file(file) }
+        offenses, problems = collect_problems { only_changed_lines(file, process_file(file)) }
         succeeded = offenses.none? { |o| considered_failure?(o) && offense_displayed?(o) }
 
         [offenses, succeeded, problems]

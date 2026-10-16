@@ -124,6 +124,7 @@ module RuboCop
           end
           @options[:changed] = revision || ChangedFiles::DEFAULT_REVISION
         end
+        option(opts, '--changed-lines') { @options[:changed] ||= ChangedFiles::DEFAULT_REVISION }
         option(opts, '-s', '--stdin FILE')
         option(opts, '--editor-mode')
         option(opts, '-P', '--[no-]parallel')
@@ -436,6 +437,7 @@ module RuboCop
       validate_lsp_and_editor_mode
       validate_diff
       validate_changed_and_stdin
+      validate_changed_lines_and_autocorrect
       validate_enable_all_cops_and_disable_all_cops
       disable_parallel_when_invalid_option_combo
 
@@ -495,6 +497,15 @@ module RuboCop
       return unless @options.key?(:changed) && @options.key?(:stdin)
 
       raise OptionArgumentError, '--changed cannot be used with --stdin.'
+    end
+
+    # A cop collects the corrections for all of its offenses in a file
+    # together, so there is no leaving out the ones on unchanged lines.
+    def validate_changed_lines_and_autocorrect
+      return unless @options[:changed_lines]
+      return unless @options.values_at(:autocorrect, :safe_autocorrect, :fix_layout).any?
+
+      raise OptionArgumentError, '--changed-lines cannot be used with autocorrection.'
     end
 
     def validate_lsp_and_editor_mode
@@ -668,6 +679,9 @@ module RuboCop
                                          'revision, defaulting to HEAD. Untracked files',
                                          'count as changed. Pass a revision with',
                                          '`--changed=REVISION`.'],
+      changed_lines:                    ['Like --changed, but report only the offenses',
+                                         'that touch a line added or modified since the',
+                                         'revision. Syntax errors are always reported.'],
       force_default_config:             ['Use default configuration even if configuration',
                                          'files are present in the directory tree.'],
       format:                           ['Choose an output formatter. This option',

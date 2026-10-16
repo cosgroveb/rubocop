@@ -141,6 +141,7 @@ module RuboCop
       def inspect_source(file, source, limit, scope)
         options = { **scope.cop_options, editing: true }
         offenses = @runtime.raw_offenses(file, source, options: options)
+        offenses = scope.select_offenses(file, offenses)
         offense_entry(file, offenses, limit).merge(problems_of_last_run(file))
       end
 

@@ -22,6 +22,10 @@ module RuboCop
 
       def initialize(scope, safety: true, contextual: false, dry_run: false,
                      max_offenses_per_cop: DEFAULT_MAX_OFFENSES_PER_COP)
+        # A cop collects the corrections for all of its offenses in a file
+        # together, so there is no leaving out the ones on unchanged lines.
+        raise Error, '`changed_lines` only applies to inspection.' if scope.changed_lines?
+
         @scope = scope
         @safety = safety
         @contextual = contextual

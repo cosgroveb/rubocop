@@ -21,6 +21,12 @@ module RuboCop
           type: %w[boolean string],
           description: 'Check only the files git says changed: `true` for changes since the ' \
                        'last commit, or a revision to compare against, such as `main`.'
+        },
+        changed_lines: {
+          type: 'boolean',
+          description: 'Report only the offenses on lines git says were added or modified, ' \
+                       'since the revision `changed` gives or the last commit. Syntax ' \
+                       'errors are always reported. Inspection only.'
         }
       }.freeze
 
@@ -28,10 +34,11 @@ module RuboCop
       # alone, so it counts as no list.
       #
       # @raise [RuboCop::Error] for a scope the command line would refuse
-      def initialize(inline:, only: nil, except: nil, changed: nil)
+      def initialize(inline:, only: nil, except: nil, changed: nil, changed_lines: nil)
         @only = only if only&.any?
         @except = except if except&.any?
-        @changed = changed == true ? ChangedFiles::DEFAULT_REVISION : changed
+        @changed_lines = changed_lines == true
+        @changed = revision(changed)
         validate(inline)
       end
 
@@ -40,11 +47,30 @@ module RuboCop
         { only: @only, except: @except }.compact
       end
 
+      def changed_lines?
+        @changed_lines
+      end
+
       def select_files(files)
-        @changed ? ChangedFiles.new(@changed).filter(files) : files
+        return files unless @changed
+
+        changed_files = ChangedFiles.new(@changed)
+        @lines = changed_files.lines if @changed_lines
+        changed_files.filter(files)
+      end
+
+      def select_offenses(file, offenses)
+        @lines ? ChangedFiles.touching(@lines.fetch(file, []), offenses) : offenses
       end
 
       private
+
+      # `changed_lines` on its own compares against the last commit, the way
+      # `changed: true` does.
+      def revision(changed)
+        changed = true if @changed_lines && !changed
+        changed == true ? ChangedFiles::DEFAULT_REVISION : changed
+      end
 
       # Refuses what the command line refuses for the same options. Cop names
       # are left to the runner, which checks them the way `--only` does: short

@@ -89,6 +89,9 @@ RSpec.describe RuboCop::Options, :isolated_environment do
                                                revision, defaulting to HEAD. Untracked files
                                                count as changed. Pass a revision with
                                                `--changed=REVISION`.
+                  --changed-lines              Like --changed, but report only the offenses
+                                               that touch a line added or modified since the
+                                               revision. Syntax errors are always reported.
               -s, --stdin FILE                 Pipe source from STDIN, using FILE in offense
                                                reports. This is useful for editor integration.
                   --editor-mode                Optimize real-time feedback in editors,
